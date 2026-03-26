@@ -7,6 +7,20 @@ from zoneinfo import ZoneInfo
 from send_email import send
 from google_sheets import GoogleSheet
 
+if "reserva_ok" not in st.session_state:
+    st.session_state.reserva_ok = False
+
+if "ultima_reserva" not in st.session_state:
+    st.session_state.ultima_reserva = None
+
+if "nombre" not in st.session_state:
+    st.session_state.nombre = ""
+
+if "email" not in st.session_state:
+    st.session_state.email = ""
+
+if "nota" not in st.session_state:
+    st.session_state.nota = ""
 
 #Funciones
 def add_30_minutes(time_str):
@@ -101,69 +115,84 @@ if selected == "Reseñas":
 if selected == "Servicios":
 
     st.subheader("Reservar cita")
-    a1,a2 = st.columns(2)
-    nombre = a1.text_input("Tu Nombre*")
-    email = a2.text_input("Tu email*")
-    fecha = a1.date_input("Fecha")
-    if fecha: 
-        if empleado == 'Tadeo':
+
+    with st.form("form_reserva", clear_on_submit=True):
+        a1, a2 = st.columns(2)
+
+        nombre = a1.text_input("Tu Nombre*", key="nombre")
+        email = a2.text_input("Tu email*", key="email")
+        fecha = a1.date_input("Fecha")
+        servicio = a1.selectbox("Servicio*", servicios)
+        empleado = a2.selectbox("Empleado", empleados)
+
+        if empleado == "Tadeo":
             calendarid = calendarid1
-        elif empleado == 'Matias':
+        else:
             calendarid = calendarid2
+
         calendar = GoogleCalendar(credentials, calendarid)
         hours_blocked = calendar.get_start_times(str(fecha))
-        result_hours = np.setdiff1d(horas_disponibles,hours_blocked)
+        result_hours = np.setdiff1d(horas_disponibles, hours_blocked)
 
-    hora = a2.selectbox("Horas disponibles", horas_disponibles)
-    servicio = a1.selectbox("servicio*", servicios)
-    empleado = a2.selectbox("Empleado", empleados)
-    nota = a1.text_area("Nota (opcional)")
+        hora = a2.selectbox("Horas disponibles", result_hours)
+        nota = st.text_area("Nota (opcional)", key="nota")
 
-    enviar = st.button("Reservar")
+        enviar = st.form_submit_button("Reservar")
 
     if enviar:
         if not nombre or not email or not servicio:
             st.warning("Tienes que rellenar todos los campos obligatorios antes de reservar tu cita")
         else:
-            with st.spinner('Cargando ...'):
-                 # create event in google calendar
-                precio = servicio.split("-")[1]
-                parsed_time = dt.datetime.strptime(hora, "%H:%M").time()
-                hours1 = parsed_time.hour
-                minutes1 = parsed_time.minute
-                end_hours = add_30_minutes(hora)
-                tz = ZoneInfo("America/Santiago")
-                parsed_time = dt.datetime.strptime(hora, "%H:%M").time()
-                end_hours = add_30_minutes(hora)
-                start_dt = dt.datetime( fecha.year, fecha.month, fecha.day, parsed_time.hour, parsed_time.minute, tzinfo=tz)
-                end_dt = dt.datetime( fecha.year, fecha.month, fecha.day, end_hours.hour, end_hours.minute, tzinfo=tz)
-                start_time = start_dt.isoformat()
-                end_time = end_dt.isoformat()
-                summary = servicio + "-" + nombre
-                if empleado == "Tadeo":
-                    calendarid = calendarid1
-                elif empleado == "Matias":
-                    calendarid = calendarid2
+            reserva_actual = f"{nombre}|{email}|{fecha}|{hora}|{servicio}|{empleado}"
 
-                #crear evento en google calendar
-                try:
-                    calendar_manager = GoogleCalendar(credentials, calendarid)
-                    calendar_manager.create_event(summary, start_time, end_time, timezone)
-                except Exception as e:
-                    st.warning("Ha habido un error al crear su cita, por favor intentelo más tarde.")
+            if st.session_state.ultima_reserva == reserva_actual:
+                st.warning("Esta cita ya fue registrada. No se volverá a crear.")
+            else:
+                with st.spinner("Cargando ..."):
+                    try:
+                        precio = servicio.split("-")[1].strip()
 
+                        parsed_time = dt.datetime.strptime(hora, "%H:%M").time()
+                        end_hours = add_30_minutes(hora)
 
-                #envio de correo
-                send(email,nombre,fecha,hora,servicio,empleado)
+                        tz = ZoneInfo("America/Santiago")
 
-                #guardar información en google sheet
-                try:
-                    data = [[nombre,email,str(fecha),str(hora),servicio,empleado,nota,precio]]
-                    google = GoogleSheet(credentials, document,sheet)
-                    range = google.get_last_row_range()
-                    google.write_data(range, data)
-                except Exception as e:
-                    print(e)
+                        start_dt = dt.datetime(
+                            fecha.year, fecha.month, fecha.day,
+                            parsed_time.hour, parsed_time.minute,
+                            tzinfo=tz
+                        )
 
-                #mensaje de exito
-                st.success("Su cita ha sido creada correctamente")
+                        end_dt = dt.datetime(
+                            fecha.year, fecha.month, fecha.day,
+                            end_hours.hour, end_hours.minute,
+                            tzinfo=tz
+                        )
+
+                        start_time = start_dt.isoformat()
+                        end_time = end_dt.isoformat()
+
+                        summary = servicio + " - " + nombre
+
+                        # crear evento en google calendar
+                        calendar_manager = GoogleCalendar(credentials, calendarid)
+                        calendar_manager.create_event(summary, start_time, end_time, timezone)
+
+                        # envío de correo
+                        send(email, nombre, fecha, hora, servicio, empleado)
+
+                        # guardar información en google sheet
+                        data = [[nombre, email, str(fecha), str(hora), servicio, empleado, nota, precio]]
+                        google = GoogleSheet(credentials, document, sheet)
+                        rango = google.get_last_row_range()
+                        google.write_data(rango, data)
+
+                        # guardar firma de última reserva para evitar duplicados
+                        st.session_state.ultima_reserva = reserva_actual
+                        st.session_state.reserva_ok = True
+
+                        st.success("Su cita ha sido creada correctamente")
+                        st.rerun()
+
+                    except Exception as e:
+                        st.error(f"Ocurrió un error al reservar la cita: {e}")
