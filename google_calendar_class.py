@@ -2,25 +2,24 @@ from google.oauth2 import service_account
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
 from datetime import datetime
+import streamlit as st
 
 
 class GoogleCalendar:
-
-    def __init__(self, credentials_file, calendarid):
-        self.credentials_file = credentials_file
+    def __init__(self, calendarid):
         self.calendarid = calendarid
         self.service = self._create_service()
 
     def _create_service(self):
-        credentials = service_account.Credentials.from_service_account_file(
-            self.credentials_file,
-            scopes=['https://www.googleapis.com/auth/calendar']
+        credentials_info = dict(st.secrets["google_service_account"])
+        credentials = service_account.Credentials.from_service_account_info(
+            credentials_info,
+            scopes=["https://www.googleapis.com/auth/calendar"]
         )
-        service = build('calendar', 'v3', credentials=credentials)
+        service = build("calendar", "v3", credentials=credentials)
         return service
 
     def get_events(self, date=None):
-        # Obtener eventos
         if not date:
             events = self.service.events().list(calendarId=self.calendarid).execute()
         else:
@@ -31,42 +30,36 @@ class GoogleCalendar:
                 timeMin=start_date,
                 timeMax=end_date
             ).execute()
-        return events.get('items', [])
 
-    # get events by date and return the event id
-    def get_event_by_date(self, start_date, end_date):
-        # Obtener evento
-        event = self.service.events().list(
-            calendarId=self.calendarid,
-            timeMin=start_date,
-            timeMax=end_date
-        ).execute()
-        # devolver el id del evento
-        return event["items"][0]["id"]
+        return events.get("items", [])
 
     def get_start_times(self, date):
         events = self.get_events(date)
         start_times = []
 
         for event in events:
-            start_time = event['start']['dateTime']
-            parsed_start_time = datetime.fromisoformat(start_time[:-6])
+            start_info = event.get("start", {})
+            start_time = start_info.get("dateTime")
+
+            if not start_time:
+                continue
+
+            parsed_start_time = datetime.fromisoformat(start_time.replace("Z", "+00:00"))
             hours_minutes = parsed_start_time.strftime("%H:%M")
             start_times.append(hours_minutes)
 
         return start_times
 
     def create_event(self, name_event, start_time, end_time, timezone, attendees=None):
-        # Crear un evento
         event = {
-            'summary': name_event,
-            'start': {
-                'dateTime': start_time,
-                'timeZone': timezone,
+            "summary": name_event,
+            "start": {
+                "dateTime": start_time,
+                "timeZone": timezone,
             },
-            'end': {
-                'dateTime': end_time,
-                'timeZone': timezone,
+            "end": {
+                "dateTime": end_time,
+                "timeZone": timezone,
             },
         }
 
@@ -82,36 +75,4 @@ class GoogleCalendar:
             raise Exception(f"An error has occurred: {error}")
 
         return created_event
-
-    def update_event(self, event_id, summary=None, start_time=None, end_time=None):
-        # Actualizar un evento
-        event = self.service.events().get(
-            calendarId=self.calendarid,
-            eventId=event_id
-        ).execute()
-
-        if summary:
-            event['summary'] = summary
-
-        if start_time:
-            event['start']['dateTime'] = start_time.strftime('%Y-%m-%dT%H:%M:%S')
-
-        if end_time:
-            event['end']['dateTime'] = end_time.strftime('%Y-%m-%dT%H:%M:%S')
-
-        updated_event = self.service.events().update(
-            calendarId=self.calendarid,
-            eventId=event_id,
-            body=event
-        ).execute()
-
-        return updated_event
-
-    def delete_event(self, event_id):
-        # Eliminar un evento
-        self.service.events().delete(
-            calendarId=self.calendarid,
-            eventId=event_id
-        ).execute()
-        return True
 
